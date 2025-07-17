@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost
--- Generation Time: Jul 17, 2025 at 01:59 PM
+-- Generation Time: Jul 17, 2025 at 03:19 PM
 -- Server version: 11.8.2-MariaDB
 -- PHP Version: 8.4.10
 
@@ -53,6 +53,30 @@ CREATE TABLE `dim_time` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `entries`
+--
+
+CREATE TABLE `entries` (
+  `mysqlid` int(11) NOT NULL,
+  `_id` varchar(255) DEFAULT NULL,
+  `date` double DEFAULT NULL,
+  `dateString` text DEFAULT NULL,
+  `delta` double DEFAULT NULL,
+  `device` text DEFAULT NULL,
+  `direction` text DEFAULT NULL,
+  `filtered` double DEFAULT NULL,
+  `noise` int(11) DEFAULT NULL,
+  `rssi` int(11) DEFAULT NULL,
+  `sgv` int(11) DEFAULT NULL,
+  `sysTime` text DEFAULT NULL,
+  `type` text DEFAULT NULL,
+  `unfiltered` double DEFAULT NULL,
+  `utcOffset` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `fact_glucose`
 --
 
@@ -92,7 +116,35 @@ CREATE TABLE `fact_meal` (
   `ts` bigint(20) DEFAULT NULL,
   `carbs` double DEFAULT NULL,
   `protein` double DEFAULT NULL,
-  `fat` double DEFAULT NULL
+  `fat` double DEFAULT NULL,
+  `classification` enum('hypo','snack','meal') DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `treatments`
+--
+
+CREATE TABLE `treatments` (
+  `mysqlid` int(11) NOT NULL,
+  `_id` varchar(255) DEFAULT NULL,
+  `carbs` double DEFAULT NULL,
+  `created_at` text DEFAULT NULL,
+  `duration` int(11) DEFAULT NULL,
+  `enteredBy` text DEFAULT NULL,
+  `eventType` text DEFAULT NULL,
+  `fat` text DEFAULT NULL,
+  `insulin` double DEFAULT NULL,
+  `insulinInjections` text DEFAULT NULL,
+  `notes` text DEFAULT NULL,
+  `profile` text DEFAULT NULL,
+  `protein` text DEFAULT NULL,
+  `sysTime` text DEFAULT NULL,
+  `timestamp` text DEFAULT NULL,
+  `utcOffset` int(11) DEFAULT NULL,
+  `uuid` text DEFAULT NULL,
+  `epocdate` bigint(20) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -112,6 +164,12 @@ ALTER TABLE `dim_insulin_type`
 ALTER TABLE `dim_time`
   ADD PRIMARY KEY (`time_id`),
   ADD UNIQUE KEY `u_ts` (`ts`);
+
+--
+-- Indexes for table `entries`
+--
+ALTER TABLE `entries`
+  ADD PRIMARY KEY (`mysqlid`);
 
 --
 -- Indexes for table `fact_glucose`
@@ -136,6 +194,12 @@ ALTER TABLE `fact_meal`
   ADD KEY `time_id` (`time_id`);
 
 --
+-- Indexes for table `treatments`
+--
+ALTER TABLE `treatments`
+  ADD PRIMARY KEY (`mysqlid`);
+
+--
 -- AUTO_INCREMENT for dumped tables
 --
 
@@ -152,10 +216,22 @@ ALTER TABLE `dim_time`
   MODIFY `time_id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `entries`
+--
+ALTER TABLE `entries`
+  MODIFY `mysqlid` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `fact_insulin`
 --
 ALTER TABLE `fact_insulin`
   MODIFY `fact_id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `treatments`
+--
+ALTER TABLE `treatments`
+  MODIFY `mysqlid` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- Constraints for dumped tables
