@@ -1,6 +1,6 @@
 import os
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pymysql
 
 MYSQL_HOST = os.environ.get("MYSQLHOST", "localhost")
@@ -93,6 +93,8 @@ def create_fact_tables():
 
 
 def get_time_id(dt):
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
     minute_dt = dt.replace(second=0, microsecond=0)
     ts_epoch = int(minute_dt.timestamp())
     cur.execute("SELECT time_id FROM dim_time WHERE ts=%s", (ts_epoch,))
@@ -147,13 +149,18 @@ def parse_time(value, offset_minutes=0):
     try:
         # Numeric values are epoch based
         if isinstance(value, (int, float)):
-            if value > 1e12:  # microseconds
+            if value > 1e14:  # microseconds
+                value = value / 1_000_000.0
+            elif value > 1e11:  # milliseconds
                 value = value / 1000.0
-            elif value > 1e10:  # milliseconds
-                value = value / 1000.0
-            dt = datetime.utcfromtimestamp(value)
+            dt = datetime.fromtimestamp(value, tz=timezone.utc)
         else:
-            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            string_value = str(value)
+            if string_value.endswith("Z"):
+                string_value = string_value[:-1] + "+00:00"
+            dt = datetime.fromisoformat(string_value)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
     except Exception:
         return None
 
