@@ -27,6 +27,7 @@ def create_dimension_tables():
             ts BIGINT NOT NULL,
             date DATE,
             hour INT,
+            minute INT,
             dow INT,
             month INT,
             year INT,
@@ -92,21 +93,22 @@ def create_fact_tables():
 
 
 def get_time_id(dt):
-    hour_dt = dt.replace(minute=0, second=0, microsecond=0)
-    ts_epoch = int(hour_dt.timestamp())
+    minute_dt = dt.replace(second=0, microsecond=0)
+    ts_epoch = int(minute_dt.timestamp())
     cur.execute("SELECT time_id FROM dim_time WHERE ts=%s", (ts_epoch,))
     res = cur.fetchone()
     if res:
         return res[0]
     cur.execute(
-        "INSERT INTO dim_time (ts, date, hour, dow, month, year) VALUES (%s,%s,%s,%s,%s,%s)",
+        "INSERT INTO dim_time (ts, date, hour, minute, dow, month, year) VALUES (%s,%s,%s,%s,%s,%s,%s)",
         (
             ts_epoch,
-            hour_dt.date(),
-            hour_dt.hour,
-            hour_dt.weekday(),
-            hour_dt.month,
-            hour_dt.year,
+            minute_dt.date(),
+            minute_dt.hour,
+            minute_dt.minute,
+            minute_dt.weekday(),
+            minute_dt.month,
+            minute_dt.year,
         ),
     )
     return cur.lastrowid
