@@ -1,6 +1,6 @@
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import pymysql
 
 MYSQL_HOST = os.environ.get("MYSQLHOST", "localhost")
@@ -134,30 +134,35 @@ def get_insulin_type_id(name: str) -> int:
     return cur.lastrowid
 
 
-def parse_time(value):
+def parse_time(value, offset_minutes=0):
+    """Parse various timestamp formats and apply an optional offset."""
     if value is None:
         return None
     try:
-        # try epoch ms
+        # Numeric values are epoch based
         if isinstance(value, (int, float)):
             if value > 1e12:  # microseconds
                 value = value / 1000.0
             elif value > 1e10:  # milliseconds
                 value = value / 1000.0
-            return datetime.utcfromtimestamp(value)
-    except Exception:
-        pass
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            dt = datetime.utcfromtimestamp(value)
+        else:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except Exception:
         return None
 
+    if offset_minutes:
+        dt += timedelta(minutes=offset_minutes)
+    return dt
+
 
 def load_glucose():
-    cur.execute("SELECT mysqlid, date, sysTime, sgv, delta, direction FROM entries")
+    cur.execute(
+        "SELECT mysqlid, date, utcOffset, sgv, delta, direction FROM entries"
+    )
     for row in cur.fetchall():
-        mysqlid, date_val, sys_time, sgv, delta, direction = row
-        dt = parse_time(date_val) or parse_time(sys_time)
+        mysqlid, date_val, utc_offset, sgv, delta, direction = row
+        dt = parse_time(date_val, offset_minutes=utc_offset or 0)
         if not dt:
             continue
         time_id = get_time_id(dt)
@@ -180,6 +185,9 @@ def parse_insulin_json(text):
     for item in data:
         if not isinstance(item, dict):
             continue
+        notes_text = str(item.get("notes", "")).lower()
+        if "priming" in notes_text:
+            continue
         name = item.get("insulin") or item.get("insulinType") or item.get("name")
         units = item.get("units") or item.get("amount") or item.get("dose")
         if units is None:
@@ -193,19 +201,19 @@ def parse_insulin_json(text):
 
 def load_treatments():
     cur.execute(
-        "SELECT mysqlid, created_at, timestamp, eventType, carbs, protein, fat, insulinInjections FROM treatments"
+        "SELECT mysqlid, epocdate, eventType, carbs, protein, fat, insulinInjections, notes FROM treatments"
     )
     for (
         mysqlid,
-        created_at,
-        ts,
+        epocdate,
         event_type,
         carbs,
         protein,
         fat,
         injections_text,
+        notes,
     ) in cur.fetchall():
-        dt = parse_time(created_at) or parse_time(ts)
+        dt = parse_time(epocdate)
         if not dt:
             continue
         time_id = get_time_id(dt)
@@ -214,7 +222,8 @@ def load_treatments():
                 "REPLACE INTO fact_meal (treatment_id, time_id, carbs, protein, fat) VALUES (%s,%s,%s,%s,%s)",
                 (mysqlid, time_id, carbs, protein, fat),
             )
-        injections = parse_insulin_json(injections_text)
+        skip_insulin = notes and "priming" in notes.lower()
+        injections = [] if skip_insulin else parse_insulin_json(injections_text)
         for inj in injections:
             name = inj.get("name") or "Unknown"
             units = inj.get("units")
