@@ -1,0 +1,10 @@
+# Use a Python venv in .direnv automatically
+layout python3
+export APITREATMENT="https://nightscout.atelierdjames.com/api/v1/treatments"
+export APIENTRIES="https://nightscout.atelierdjames.com/api/v1/entries.json"
+export APITOKEN="********"
+export MYSQLUSER="root"
+export MYSQLPW="********"
+export MYSQLDB="nillabg"
+export MONGODBKEY="mongodb://nilla:********@nightscout.atelierdjames.com:27017/nightscout"
+export OPENAI_API_KEY=""
