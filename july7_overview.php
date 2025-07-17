@@ -33,7 +33,7 @@ function query_rows($mysqli, $sql, $params) {
 }
 
 // Meals
-$meals_sql = "SELECT dt.ts, dt.hour, fm.carbs, fm.protein, fm.fat, fm.classification AS meal_type
+$meals_sql = "SELECT dt.ts, dt.hour, dt.minute, fm.carbs, fm.protein, fm.fat, fm.classification AS meal_type
               FROM fact_meal fm
               JOIN dim_time dt ON fm.time_id = dt.time_id
               WHERE dt.date = ?
@@ -41,7 +41,7 @@ $meals_sql = "SELECT dt.ts, dt.hour, fm.carbs, fm.protein, fm.fat, fm.classifica
 $meals = query_rows($mysqli, $meals_sql, [$date]);
 
 // Insulin injections
-$insulin_sql = "SELECT dt.ts, dt.hour, dit.insulin_name, fi.units
+$insulin_sql = "SELECT dt.ts, dt.hour, dt.minute, dit.insulin_name, fi.units
                 FROM fact_insulin fi
                 JOIN dim_time dt ON fi.time_id = dt.time_id
                 LEFT JOIN dim_insulin_type dit ON fi.insulin_type_id = dit.insulin_type_id
@@ -50,7 +50,7 @@ $insulin_sql = "SELECT dt.ts, dt.hour, dit.insulin_name, fi.units
 $insulin = query_rows($mysqli, $insulin_sql, [$date]);
 
 // Glucose spikes
-$glucose_sql = "SELECT dt.ts, dt.hour, fg.sgv, fg.delta, fg.direction
+$glucose_sql = "SELECT dt.ts, dt.hour, dt.minute, fg.sgv, fg.delta, fg.direction
                 FROM fact_glucose fg
                 JOIN dim_time dt ON fg.time_id = dt.time_id
                 WHERE dt.date = ? AND fg.sgv >= ?

@@ -44,6 +44,7 @@ CREATE TABLE `dim_time` (
   `ts` bigint(20) NOT NULL,
   `date` date DEFAULT NULL,
   `hour` int(11) DEFAULT NULL,
+  `minute` int(11) DEFAULT NULL,
   `dow` int(11) DEFAULT NULL,
   `month` int(11) DEFAULT NULL,
   `year` int(11) DEFAULT NULL
