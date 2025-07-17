@@ -33,7 +33,7 @@ function query_rows($mysqli, $sql, $params) {
 }
 
 // Meals
-$meals_sql = "SELECT dt.ts, dt.hour, fm.carbs, fm.protein, fm.fat
+$meals_sql = "SELECT dt.ts, dt.hour, fm.carbs, fm.protein, fm.fat, fm.classification AS meal_type
               FROM fact_meal fm
               JOIN dim_time dt ON fm.time_id = dt.time_id
               WHERE dt.date = ?
@@ -58,7 +58,8 @@ $glucose_sql = "SELECT dt.ts, dt.hour, fg.sgv, fg.delta, fg.direction
 $glucose = query_rows($mysqli, $glucose_sql, [$date, $threshold]);
 
 $format_ts = function($ts) {
-    return date('Y-m-d H:i', $ts / 1000); // assuming ts in ms
+    // dim_time.ts stores epoch seconds already
+    return date('Y-m-d H:i', $ts);
 };
 
 echo "Overview for $date\n";
@@ -67,8 +68,9 @@ echo str_repeat('-', 40) . "\n";
 echo "Meals:\n";
 if ($meals) {
     foreach ($meals as $m) {
-        printf("%s - Carbs: %s g, Protein: %s g, Fat: %s g\n",
-            $format_ts($m['ts']), $m['carbs'], $m['protein'], $m['fat']);
+        $type = $m['meal_type'] ?: 'unknown';
+        printf("%s - %s - Carbs: %s g, Protein: %s g, Fat: %s g\n",
+            $format_ts($m['ts']), $type, $m['carbs'], $m['protein'], $m['fat']);
     }
 } else {
     echo "No meal data." . PHP_EOL;
