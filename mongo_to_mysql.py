@@ -1,22 +1,16 @@
 import os
 import json
-import ast
 from pymongo import MongoClient
 import pymysql
 
-# Load environment variables
+# Environment variables
 MONGODB_URI = os.environ.get("MONGODBKEY")
 MYSQL_USER = os.environ.get("MYSQLUSER", "root")
 MYSQL_PASSWORD = os.environ.get("MYSQLPW", "")
 MYSQL_DB = os.environ.get("MYSQLDB", "test")
 
-if MONGODB_URI is None:
+if not MONGODB_URI:
     raise RuntimeError("MONGODBKEY environment variable not set")
-
-# Read MongoDB schema
-SCHEMA_FILE = os.path.join(os.path.dirname(__file__), "mondodbschema.txt")
-with open(SCHEMA_FILE, "r") as f:
-    schema = ast.literal_eval(f.read())
 
 # Connect to MongoDB
 mongo_client = MongoClient(MONGODB_URI)
@@ -31,44 +25,101 @@ mysql_conn = pymysql.connect(
     charset="utf8mb4",
     autocommit=True,
 )
-
 cur = mysql_conn.cursor()
 
 
-def mysql_type(field_types):
-    """Return a MySQL column type for a set of python type names"""
-    if "int" in field_types and field_types == {"int"}:
-        return "INT"
-    if "float" in field_types and field_types <= {"float", "int"}:
-        return "DOUBLE"
-    return "TEXT"
+ENTRY_FIELDS = [
+    "_id",
+    "date",
+    "dateString",
+    "delta",
+    "device",
+    "direction",
+    "filtered",
+    "noise",
+    "rssi",
+    "sgv",
+    "sysTime",
+    "type",
+    "unfiltered",
+    "utcOffset",
+]
+
+TREATMENT_FIELDS = [
+    "_id",
+    "carbs",
+    "created_at",
+    "duration",
+    "enteredBy",
+    "eventType",
+    "fat",
+    "insulin",
+    "insulinInjections",
+    "notes",
+    "profile",
+    "protein",
+    "sysTime",
+    "timestamp",
+    "utcOffset",
+    "uuid",
+]
 
 
-# Create tables for each collection based on schema
-for coll_name, fields in schema.items():
-    if not fields:
-        # store entire document as JSON
-        cur.execute(
-            f"CREATE TABLE IF NOT EXISTS `{coll_name}` (doc JSON)"
-        )
-        continue
-    columns = []
-    for field, types in fields.items():
-        if field == "_id":
-            col_type = "VARCHAR(255)"
-        else:
-            col_type = mysql_type(set(types))
-        columns.append(f"`{field}` {col_type}")
-    column_sql = ", ".join(columns)
-    cur.execute(f"CREATE TABLE IF NOT EXISTS `{coll_name}` ({column_sql})")
+def create_tables():
+    """Create the tables we need if they don't already exist."""
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS entries (
+            mysqlid INT(11) NOT NULL AUTO_INCREMENT,
+            _id VARCHAR(255) DEFAULT NULL,
+            date DOUBLE DEFAULT NULL,
+            dateString TEXT DEFAULT NULL,
+            delta DOUBLE DEFAULT NULL,
+            device TEXT DEFAULT NULL,
+            direction TEXT DEFAULT NULL,
+            filtered DOUBLE DEFAULT NULL,
+            noise INT(11) DEFAULT NULL,
+            rssi INT(11) DEFAULT NULL,
+            sgv INT(11) DEFAULT NULL,
+            sysTime TEXT DEFAULT NULL,
+            type TEXT DEFAULT NULL,
+            unfiltered DOUBLE DEFAULT NULL,
+            utcOffset INT(11) DEFAULT NULL,
+            PRIMARY KEY (mysqlid)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        """
+    )
 
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS treatments (
+            mysqlid INT(11) NOT NULL AUTO_INCREMENT,
+            _id VARCHAR(255) DEFAULT NULL,
+            carbs DOUBLE DEFAULT NULL,
+            created_at TEXT DEFAULT NULL,
+            duration INT(11) DEFAULT NULL,
+            enteredBy TEXT DEFAULT NULL,
+            eventType TEXT DEFAULT NULL,
+            fat TEXT DEFAULT NULL,
+            insulin DOUBLE DEFAULT NULL,
+            insulinInjections TEXT DEFAULT NULL,
+            notes TEXT DEFAULT NULL,
+            profile TEXT DEFAULT NULL,
+            protein TEXT DEFAULT NULL,
+            sysTime TEXT DEFAULT NULL,
+            timestamp TEXT DEFAULT NULL,
+            utcOffset INT(11) DEFAULT NULL,
+            uuid TEXT DEFAULT NULL,
+            PRIMARY KEY (mysqlid)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        """
+    )
 
-# Function to prepare values for insertion
 
 def prepare_value(value):
+    """Convert Mongo values to something MySQL can store."""
     if value is None:
         return None
-    # Convert ObjectId, dicts, lists etc to JSON strings
     try:
         import bson
         if isinstance(value, bson.ObjectId):
@@ -80,28 +131,47 @@ def prepare_value(value):
     return value
 
 
-# Copy data from MongoDB to MySQL
-for coll_name, fields in schema.items():
-    collection = mongo_db[coll_name]
-    docs = collection.find({})
+def upsert_row(table, fields, doc):
+    doc_id = str(doc.get("_id")) if doc.get("_id") is not None else None
 
-    if not fields:
-        # Insert whole document as JSON
-        for doc in docs:
-            cur.execute(
-                f"INSERT INTO `{coll_name}` (doc) VALUES (%s)",
-                (json.dumps(doc, default=str),),
-            )
-        continue
+    cur.execute(f"SELECT mysqlid FROM {table} WHERE _id=%s", (doc_id,))
+    existing = cur.fetchone()
 
-    field_names = list(fields.keys())
-    placeholders = ", ".join(["%s"] * len(field_names))
-    insert_sql = f"INSERT INTO `{coll_name}` ({', '.join('`'+f+'`' for f in field_names)}) VALUES ({placeholders})"
+    values = [prepare_value(doc.get(f)) for f in fields]
 
-    for doc in docs:
-        values = [prepare_value(doc.get(f)) for f in field_names]
-        cur.execute(insert_sql, values)
+    if existing:
+        # Build update statement without _id
+        update_cols = ", ".join(f"`{f}`=%s" for f in fields if f != "_id")
+        update_vals = [prepare_value(doc.get(f)) for f in fields if f != "_id"]
+        update_vals.append(doc_id)
+        cur.execute(
+            f"UPDATE {table} SET {update_cols} WHERE _id=%s",
+            update_vals,
+        )
+    else:
+        placeholders = ", ".join(["%s"] * len(fields))
+        columns = ", ".join(f"`{f}`" for f in fields)
+        cur.execute(
+            f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",
+            values,
+        )
 
-cur.close()
-mysql_conn.close()
-mongo_client.close()
+
+def sync_collection(collection_name, fields):
+    collection = mongo_db[collection_name]
+    for doc in collection.find({}):
+        upsert_row(collection_name, fields, doc)
+
+
+def main():
+    create_tables()
+    sync_collection("entries", ENTRY_FIELDS)
+    sync_collection("treatments", TREATMENT_FIELDS)
+
+    cur.close()
+    mysql_conn.close()
+    mongo_client.close()
+
+
+if __name__ == "__main__":
+    main()
