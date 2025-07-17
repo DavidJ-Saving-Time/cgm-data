@@ -190,8 +190,13 @@ def parse_insulin_json(text):
     for item in data:
         if not isinstance(item, dict):
             continue
-        notes_text = str(item.get("notes", "")).lower()
-        if "priming" in notes_text:
+        # Skip if any text field mentions priming
+        priming = False
+        for v in item.values():
+            if isinstance(v, str) and "priming" in v.lower():
+                priming = True
+                break
+        if priming:
             continue
         name = item.get("insulin") or item.get("insulinType") or item.get("name")
         units = item.get("units") or item.get("amount") or item.get("dose")
