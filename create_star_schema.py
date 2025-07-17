@@ -24,7 +24,7 @@ def create_dimension_tables():
         """
         CREATE TABLE IF NOT EXISTS dim_time (
             time_id INT AUTO_INCREMENT PRIMARY KEY,
-            ts DATETIME NOT NULL,
+            ts BIGINT NOT NULL,
             date DATE,
             hour INT,
             dow INT,
@@ -52,6 +52,7 @@ def create_fact_tables():
         CREATE TABLE IF NOT EXISTS fact_glucose (
             entry_id INT PRIMARY KEY,
             time_id INT,
+            ts BIGINT,
             sgv INT,
             delta DOUBLE,
             direction TEXT,
@@ -65,6 +66,7 @@ def create_fact_tables():
         CREATE TABLE IF NOT EXISTS fact_meal (
             treatment_id INT PRIMARY KEY,
             time_id INT,
+            ts BIGINT,
             carbs DOUBLE,
             protein DOUBLE,
             fat DOUBLE,
@@ -79,6 +81,7 @@ def create_fact_tables():
             fact_id INT AUTO_INCREMENT PRIMARY KEY,
             treatment_id INT,
             time_id INT,
+            ts BIGINT,
             insulin_type_id INT,
             units DOUBLE,
             FOREIGN KEY (time_id) REFERENCES dim_time(time_id),
@@ -89,20 +92,21 @@ def create_fact_tables():
 
 
 def get_time_id(dt):
-    ts = dt.strftime("%Y-%m-%d %H:00:00")
-    cur.execute("SELECT time_id FROM dim_time WHERE ts=%s", (ts,))
+    hour_dt = dt.replace(minute=0, second=0, microsecond=0)
+    ts_epoch = int(hour_dt.timestamp())
+    cur.execute("SELECT time_id FROM dim_time WHERE ts=%s", (ts_epoch,))
     res = cur.fetchone()
     if res:
         return res[0]
     cur.execute(
         "INSERT INTO dim_time (ts, date, hour, dow, month, year) VALUES (%s,%s,%s,%s,%s,%s)",
         (
-            ts,
-            dt.date(),
-            dt.hour,
-            dt.weekday(),
-            dt.month,
-            dt.year,
+            ts_epoch,
+            hour_dt.date(),
+            hour_dt.hour,
+            hour_dt.weekday(),
+            hour_dt.month,
+            hour_dt.year,
         ),
     )
     return cur.lastrowid
@@ -158,17 +162,18 @@ def parse_time(value, offset_minutes=0):
 
 def load_glucose():
     cur.execute(
-        "SELECT mysqlid, date, utcOffset, sgv, delta, direction FROM entries"
+        "SELECT mysqlid, date, sgv, delta, direction FROM entries"
     )
     for row in cur.fetchall():
-        mysqlid, date_val, utc_offset, sgv, delta, direction = row
-        dt = parse_time(date_val, offset_minutes=utc_offset or 0)
+        mysqlid, date_val, sgv, delta, direction = row
+        dt = parse_time(date_val, offset_minutes=120)
         if not dt:
             continue
         time_id = get_time_id(dt)
+        ts_epoch = int(dt.timestamp())
         cur.execute(
-            "REPLACE INTO fact_glucose (entry_id, time_id, sgv, delta, direction) VALUES (%s,%s,%s,%s,%s)",
-            (mysqlid, time_id, sgv, delta, direction),
+            "REPLACE INTO fact_glucose (entry_id, time_id, ts, sgv, delta, direction) VALUES (%s,%s,%s,%s,%s,%s)",
+            (mysqlid, time_id, ts_epoch, sgv, delta, direction),
         )
 
 
@@ -217,10 +222,11 @@ def load_treatments():
         if not dt:
             continue
         time_id = get_time_id(dt)
+        ts_epoch = int(dt.timestamp())
         if event_type and "meal" in event_type.lower():
             cur.execute(
-                "REPLACE INTO fact_meal (treatment_id, time_id, carbs, protein, fat) VALUES (%s,%s,%s,%s,%s)",
-                (mysqlid, time_id, carbs, protein, fat),
+                "REPLACE INTO fact_meal (treatment_id, time_id, ts, carbs, protein, fat) VALUES (%s,%s,%s,%s,%s,%s)",
+                (mysqlid, time_id, ts_epoch, carbs, protein, fat),
             )
         skip_insulin = notes and "priming" in notes.lower()
         injections = [] if skip_insulin else parse_insulin_json(injections_text)
@@ -229,8 +235,8 @@ def load_treatments():
             units = inj.get("units")
             insulin_type_id = get_insulin_type_id(name)
             cur.execute(
-                "INSERT INTO fact_insulin (treatment_id, time_id, insulin_type_id, units) VALUES (%s,%s,%s,%s)",
-                (mysqlid, time_id, insulin_type_id, units),
+                "INSERT INTO fact_insulin (treatment_id, time_id, ts, insulin_type_id, units) VALUES (%s,%s,%s,%s,%s)",
+                (mysqlid, time_id, ts_epoch, insulin_type_id, units),
             )
 
 
