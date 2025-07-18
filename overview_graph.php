@@ -5,7 +5,9 @@ $password = getenv('MYSQLPW') ?: '';
 $database = getenv('MYSQLDB') ?: 'test';
 
 $date = $_GET['date'] ?? date('Y-m-d');
-$threshold = 180; // blood glucose spike threshold
+$threshold_mgdl = 180; // blood glucose spike threshold in mg/dL
+$mgdl_to_mmol = function($v) { return round($v / 18, 1); };
+$threshold = $mgdl_to_mmol($threshold_mgdl); // threshold in mmol/L for display
 
 $mysqli = new mysqli($host, $user, $password, $database);
 if ($mysqli->connect_errno) {
@@ -55,7 +57,7 @@ $glucose_spikes_sql = "SELECT dt.ts, fg.sgv, fg.delta, fg.direction
                        JOIN dim_time dt ON fg.time_id = dt.time_id
                        WHERE dt.date = ? AND fg.sgv >= ?
                        ORDER BY dt.ts";
-$glucose_spikes = query_rows($mysqli, $glucose_spikes_sql, [$date, $threshold]);
+$glucose_spikes = query_rows($mysqli, $glucose_spikes_sql, [$date, $threshold_mgdl]);
 
 // All glucose points
 $glucose_sql = "SELECT dt.ts, fg.sgv
@@ -66,8 +68,8 @@ $glucose_sql = "SELECT dt.ts, fg.sgv
 $glucose = query_rows($mysqli, $glucose_sql, [$date]);
 
 $minutes = function($ts) { return intval(date('H', $ts)) * 60 + intval(date('i', $ts)); };
-$glucose_points = array_map(function($g) use ($minutes) {
-    return ['x' => $minutes($g['ts']), 'y' => (float)$g['sgv']];
+$glucose_points = array_map(function($g) use ($minutes, $mgdl_to_mmol) {
+    return ['x' => $minutes($g['ts']), 'y' => $mgdl_to_mmol((float)$g['sgv'])];
 }, $glucose);
 $meal_points = array_map(function($m) use ($minutes) {
     return ['x' => $minutes($m['ts']), 'y' => (float)$m['carbs']];
@@ -104,7 +106,7 @@ var chart = new Chart(ctx, {
     data: {
         datasets: [
             {
-                label: 'Glucose (mg/dL)',
+                label: 'Glucose (mmol/L)',
                 data: glucoseData,
                 borderColor: 'rgba(75, 192, 192, 1)',
                 tension: 0.1,
@@ -151,7 +153,7 @@ var chart = new Chart(ctx, {
             },
             y: {
                 display: true,
-                title: { display: true, text: 'mg/dL' }
+                title: { display: true, text: 'mmol/L' }
             },
             y1: {
                 display: true,
@@ -183,11 +185,11 @@ var chart = new Chart(ctx, {
 <?php else: ?>
 <p>No insulin data.</p>
 <?php endif; ?>
-<h2>Glucose Spikes (>= <?php echo $threshold; ?> mg/dL)</h2>
+<h2>Glucose Spikes (>= <?php echo $threshold; ?> mmol/L)</h2>
 <?php if ($glucose_spikes): ?>
 <ul>
 <?php foreach ($glucose_spikes as $g): ?>
-<li><?php echo date('H:i', $g['ts']); ?> - SGV: <?php echo $g['sgv']; ?> mg/dL, Delta: <?php echo $g['delta']; ?>, Direction: <?php echo htmlspecialchars($g['direction']); ?></li>
+<li><?php echo date('H:i', $g['ts']); ?> - SGV: <?php echo $mgdl_to_mmol($g['sgv']); ?> mmol/L, Delta: <?php echo $mgdl_to_mmol($g['delta']); ?>, Direction: <?php echo htmlspecialchars($g['direction']); ?></li>
 <?php endforeach; ?>
 </ul>
 <?php else: ?>
