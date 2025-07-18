@@ -65,6 +65,17 @@ $glucose_sql = "SELECT dt.ts, fg.sgv
                 ORDER BY dt.ts";
 $glucose = query_rows($mysqli, $glucose_sql, [$date]);
 
+$minutes = function($ts) { return intval(date('H', $ts)) * 60 + intval(date('i', $ts)); };
+$glucose_points = array_map(function($g) use ($minutes) {
+    return ['x' => $minutes($g['ts']), 'y' => (float)$g['sgv']];
+}, $glucose);
+$meal_points = array_map(function($m) use ($minutes) {
+    return ['x' => $minutes($m['ts']), 'y' => (float)$m['carbs']];
+}, $meals);
+$insulin_points = array_map(function($i) use ($minutes) {
+    return ['x' => $minutes($i['ts']), 'y' => (float)$i['units']];
+}, $insulin);
+
 $mysqli->close();
 ?>
 <!DOCTYPE html>
@@ -84,28 +95,69 @@ $mysqli->close();
 <canvas id="glucoseChart" width="600" height="300"></canvas>
 <script>
 var ctx = document.getElementById('glucoseChart').getContext('2d');
-var data = <?php echo json_encode(array_map(function($g){ return ['t'=>date('H:i', $g['ts']), 'y'=>$g['sgv']]; }, $glucose)); ?>;
+var glucoseData = <?php echo json_encode($glucose_points); ?>;
+var mealData = <?php echo json_encode($meal_points); ?>;
+var insulinData = <?php echo json_encode($insulin_points); ?>;
+
 var chart = new Chart(ctx, {
     type: 'line',
     data: {
-        labels: data.map(p => p.t),
-        datasets: [{
-            label: 'Glucose (mg/dL)',
-            data: data.map(p => p.y),
-            borderColor: 'rgba(75, 192, 192, 1)',
-            tension: 0.1,
-            fill: false
-        }]
+        datasets: [
+            {
+                label: 'Glucose (mg/dL)',
+                data: glucoseData,
+                borderColor: 'rgba(75, 192, 192, 1)',
+                tension: 0.1,
+                fill: false,
+                yAxisID: 'y',
+                parsing: false,
+                pointRadius: 0
+            },
+            {
+                label: 'Meals (carbs)',
+                data: mealData,
+                type: 'scatter',
+                backgroundColor: 'rgba(255, 99, 132, 1)',
+                borderColor: 'rgba(255, 99, 132, 1)',
+                yAxisID: 'y1',
+                parsing: false
+            },
+            {
+                label: 'Insulin (units)',
+                data: insulinData,
+                type: 'scatter',
+                backgroundColor: 'rgba(54, 162, 235, 1)',
+                borderColor: 'rgba(54, 162, 235, 1)',
+                yAxisID: 'y1',
+                parsing: false
+            }
+        ]
     },
     options: {
         scales: {
             x: {
-                display: true,
+                type: 'linear',
+                position: 'bottom',
+                min: 0,
+                max: 1440,
+                ticks: {
+                    callback: function(value) {
+                        var h = Math.floor(value / 60);
+                        var m = Math.floor(value % 60);
+                        return ('0' + h).slice(-2) + ':' + ('0' + m).slice(-2);
+                    }
+                },
                 title: { display: true, text: 'Time' }
             },
             y: {
                 display: true,
                 title: { display: true, text: 'mg/dL' }
+            },
+            y1: {
+                display: true,
+                position: 'right',
+                grid: { drawOnChartArea: false },
+                title: { display: true, text: 'Units/Carbs' }
             }
         }
     }
