@@ -170,6 +170,16 @@ var chart = new Chart(ctx, {
                 parsing: false,
                 pointRadius: ctx => 2 + Math.sqrt(ctx.raw.units || 0),
                 showLine: false
+            },
+            {
+                label: 'IOB (units)',
+                data: iobData,
+                borderColor: 'rgba(255,165,0,1)',
+                tension: 0.1,
+                fill: false,
+                yAxisID: 'y1',
+                parsing: false,
+                pointRadius: 0           
             }
         ]
     },
