@@ -34,7 +34,7 @@ def classify(carbs, protein, fat, ts):
     # Check for insulin injections within 30 minutes of the meal
     cur.execute(
         "SELECT 1 FROM fact_insulin WHERE ts BETWEEN %s AND %s LIMIT 1",
-        (ts - 1800, ts + 1800),
+        (ts - 2700, ts + 2700),
     )
     has_insulin = cur.fetchone() is not None
 
