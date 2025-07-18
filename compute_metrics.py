@@ -17,6 +17,10 @@ mysql_conn = pymysql.connect(
 )
 cur = mysql_conn.cursor()
 
+# Maximum difference between a meal and an insulin injection in seconds.
+# Doses within this window are associated with the meal.
+TIME_WINDOW = 30 * 60  # 30 minutes
+
 
 # Map an hour in dim_time to a time bucket.
 # Expected time ranges: 04-12 = morning, 12-18 = afternoon, else evening.
@@ -43,14 +47,15 @@ def nearest_glucose(ts: int, before: bool = True, offset: int = 0):
     return row[0] if row else None
 
 
-# Query meals paired with insulin doses
+# Query meals paired with insulin doses based on temporal proximity
 cur.execute(
     """
     SELECT m.treatment_id, m.ts, m.carbs, fi.units, dt.hour
     FROM fact_meal m
-    JOIN fact_insulin fi ON fi.treatment_id = m.treatment_id
+    JOIN fact_insulin fi ON fi.ts BETWEEN m.ts - %s AND m.ts + %s
     JOIN dim_time dt ON m.time_id = dt.time_id
-    """
+    """,
+    (TIME_WINDOW, TIME_WINDOW),
 )
 
 stats = defaultdict(lambda: defaultdict(list))
