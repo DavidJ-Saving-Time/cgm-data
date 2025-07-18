@@ -68,9 +68,21 @@ $glucose_sql = "SELECT dt.ts, fg.sgv
 $glucose = query_rows($mysqli, $glucose_sql, [$date]);
 
 $minutes = function($ts) { return intval(date('H', $ts)) * 60 + intval(date('i', $ts)); };
-$glucose_points = array_map(function($g) use ($minutes, $mgdl_to_mmol) {
-    return ['x' => $minutes($g['ts']), 'y' => $mgdl_to_mmol((float)$g['sgv'])];
-}, $glucose);
+$glucose_points = [];
+$prev_min = null;
+$prev_val = null;
+foreach ($glucose as $g) {
+    $min = $minutes($g['ts']);
+    $val = $mgdl_to_mmol((float)$g['sgv']);
+    if ($prev_min !== null) {
+        for ($m = $prev_min + 5; $m < $min; $m += 5) {
+            $glucose_points[] = ['x' => $m, 'y' => $prev_val];
+        }
+    }
+    $glucose_points[] = ['x' => $min, 'y' => $val];
+    $prev_min = $min;
+    $prev_val = $val;
+}
 $meal_points = array_map(function($m) use ($minutes) {
     return ['x' => $minutes($m['ts']), 'y' => (float)$m['carbs']];
 }, $meals);
