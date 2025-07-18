@@ -43,13 +43,19 @@ $meals_sql = "SELECT dt.ts, fm.carbs, fm.protein, fm.fat, fm.classification AS m
 $meals = query_rows($mysqli, $meals_sql, [$date]);
 
 // Insulin injections
-$insulin_sql = "SELECT dt.ts, dit.insulin_name, fi.units
+$insulin_sql = "SELECT dt.ts, dit.insulin_name, dit.insulin_class, fi.units
                 FROM fact_insulin fi
                 JOIN dim_time dt ON fi.time_id = dt.time_id
                 LEFT JOIN dim_insulin_type dit ON fi.insulin_type_id = dit.insulin_type_id
                 WHERE dt.date = ?
                 ORDER BY dt.ts";
 $insulin = query_rows($mysqli, $insulin_sql, [$date]);
+
+// Only bolus insulin should contribute to IOB calculations
+$bolus_insulin = array_values(array_filter(
+    $insulin,
+    function ($i) { return ($i['insulin_class'] ?? null) === 'bolus'; }
+));
 
 // Glucose spikes
 $glucose_spikes_sql = "SELECT dt.ts, fg.sgv, fg.delta, fg.direction
@@ -132,7 +138,7 @@ foreach ($insulin as $i) {
         $insulin_points[] = ['x' => $x, 'y' => $closest, 'units' => (float)$i['units']];
     }
 }
-$iob_points = compute_iob_points($insulin, $minutes);
+$iob_points = compute_iob_points($bolus_insulin, $minutes);
 $mysqli->close();
 ?>
 <!DOCTYPE html>
