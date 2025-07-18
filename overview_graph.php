@@ -68,6 +68,36 @@ $glucose_sql = "SELECT dt.ts, fg.sgv
 $glucose = query_rows($mysqli, $glucose_sql, [$date]);
 
 $minutes = function($ts) { return intval(date('H', $ts)) * 60 + intval(date('i', $ts)); };
+
+function compute_iob_points(array $insulin, callable $to_minutes, int $step = 5) {
+    $onset = 10;
+    $peak = 75;
+    $duration = 300;
+
+    $entries = array_map(function($i) use ($to_minutes) {
+        return ['min' => $to_minutes($i['ts']), 'units' => (float)$i['units']];
+    }, $insulin);
+
+    $points = [];
+    for ($t = 0; $t <= 1440; $t += $step) {
+        $iob = 0.0;
+        foreach ($entries as $e) {
+            $tau = $t - $e['min'];
+            if ($tau < $onset || $tau >= $duration) {
+                $f = 0.0;
+            } elseif ($tau < $peak) {
+                $f = ($tau - $onset) / ($peak - $onset);
+            } else {
+                $f = ($duration - $tau) / ($duration - $peak);
+            }
+            if ($f > 0) {
+                $iob += $f * $e['units'];
+            }
+        }
+        $points[] = ['x' => $t, 'y' => $iob];
+    }
+    return $points;
+}
 $glucose_points = [];
 $prev_min = null;
 $prev_val = null;
@@ -89,6 +119,8 @@ $meal_points = array_map(function($m) use ($minutes) {
 $insulin_points = array_map(function($i) use ($minutes) {
     return ['x' => $minutes($i['ts']), 'y' => (float)$i['units']];
 }, $insulin);
+
+$iob_points = compute_iob_points($insulin, $minutes);
 
 $mysqli->close();
 ?>
@@ -112,6 +144,7 @@ var ctx = document.getElementById('glucoseChart').getContext('2d');
 var glucoseData = <?php echo json_encode($glucose_points); ?>;
 var mealData = <?php echo json_encode($meal_points); ?>;
 var insulinData = <?php echo json_encode($insulin_points); ?>;
+var iobData = <?php echo json_encode($iob_points); ?>;
 
 var chart = new Chart(ctx, {
     type: 'line',
@@ -144,6 +177,16 @@ var chart = new Chart(ctx, {
                 borderColor: 'rgba(54, 162, 235, 1)',
                 yAxisID: 'y1',
                 parsing: false
+            },
+            {
+                label: 'IOB (units)',
+                data: iobData,
+                borderColor: 'rgba(255,165,0,1)',
+                tension: 0.1,
+                fill: false,
+                yAxisID: 'y1',
+                parsing: false,
+                pointRadius: 0
             }
         ]
     },
