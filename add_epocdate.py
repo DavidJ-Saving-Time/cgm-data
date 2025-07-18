@@ -1,6 +1,6 @@
 import os
 import pymysql
-from datetime import datetime
+from datetime import datetime, timedelta
 
 MYSQL_USER = os.environ.get("MYSQLUSER", "root")
 MYSQL_PASSWORD = os.environ.get("MYSQLPW", "")
@@ -30,6 +30,8 @@ for mysqlid, created_at in rows:
     if created_at:
         try:
             dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            # Apply 120 minute offset to align with the expected timezone
+            dt += timedelta(minutes=120)
             epoch_ms = int(dt.timestamp() * 1000)
         except Exception:
             epoch_ms = None
