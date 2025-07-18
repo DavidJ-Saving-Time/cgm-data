@@ -81,7 +81,7 @@ foreach ($meals as $m) {
         if ($d < $dist) { $dist = $d; $closest = $g['y']; }
     }
     if ($closest !== null) {
-        $meal_points[] = ['x' => $x, 'y' => $closest];
+        $meal_points[] = ['x' => $x, 'y' => $closest, 'carbs' => (float)$m['carbs']];
     }
 }
 
@@ -95,7 +95,7 @@ foreach ($insulin as $i) {
         if ($d < $dist) { $dist = $d; $closest = $g['y']; }
     }
     if ($closest !== null) {
-        $insulin_points[] = ['x' => $x, 'y' => $closest];
+        $insulin_points[] = ['x' => $x, 'y' => $closest, 'units' => (float)$i['units']];
     }
 }
 
@@ -133,7 +133,13 @@ var chart = new Chart(ctx, {
                 fill: false,
                 yAxisID: 'y',
                 parsing: false,
-                pointRadius: 4,
+                pointRadius: 3,
+                pointBackgroundColor: ctx => {
+                    const y = ctx.parsed.y;
+                    if (y > 8.4) return 'red';
+                    if (y < 3.7) return 'blue';
+                    return 'rgba(75, 192, 192, 1)';
+                },
                 segment: {
                     borderColor: ctx => {
                         const y = ctx.p0.parsed.y;
@@ -151,7 +157,7 @@ var chart = new Chart(ctx, {
                 borderColor: 'rgba(255, 99, 132, 1)',
                 yAxisID: 'y',
                 parsing: false,
-                pointRadius: 5,
+                pointRadius: ctx => 2 + Math.sqrt(ctx.raw.carbs || 0),
                 showLine: false
             },
             {
@@ -162,7 +168,7 @@ var chart = new Chart(ctx, {
                 borderColor: 'rgba(54, 162, 235, 1)',
                 yAxisID: 'y',
                 parsing: false,
-                pointRadius: 5,
+                pointRadius: ctx => 2 + Math.sqrt(ctx.raw.units || 0),
                 showLine: false
             }
         ]
