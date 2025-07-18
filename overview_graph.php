@@ -63,7 +63,7 @@ $glucose_spikes = query_rows($mysqli, $glucose_spikes_sql, [$date, $threshold_mg
 $glucose_sql = "SELECT dt.ts, fg.sgv
                 FROM fact_glucose fg
                 JOIN dim_time dt ON fg.time_id = dt.time_id
-                WHERE dt.date = ?
+                WHERE dt.date = ? AND fg.sgv > 39 -- filter out sensor errors
                 ORDER BY dt.ts";
 $glucose = query_rows($mysqli, $glucose_sql, [$date]);
 
