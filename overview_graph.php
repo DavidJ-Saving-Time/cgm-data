@@ -75,11 +75,13 @@ $glucose = query_rows($mysqli, $glucose_sql, [$date]);
 
 $minutes = function($ts) { return intval(date('H', $ts)) * 60 + intval(date('i', $ts)); };
 
-
 function compute_iob_points(array $insulin, callable $to_minutes, int $step = 5) {
-    $onset = 10;
-    $peak = 75;
-    $duration = 300;
+    // Pharmacokinetic model parameters for rapid acting insulin
+    // ka: absorption rate constant (per minute), typical ~0.03 min^-1
+    // ke: elimination rate constant (per minute), typical ~0.008 min^-1
+    $ka = 0.03;
+    $ke = 0.008;
+    $duration = 300; // minutes of activity window
 
     $entries = array_map(function($i) use ($to_minutes) {
         return ['min' => $to_minutes($i['ts']), 'units' => (float)$i['units']];
@@ -90,14 +92,8 @@ function compute_iob_points(array $insulin, callable $to_minutes, int $step = 5)
         $iob = 0.0;
         foreach ($entries as $e) {
             $tau = $t - $e['min'];
-            if ($tau < $onset || $tau >= $duration) {
-                $f = 0.0;
-            } elseif ($tau < $peak) {
-                $f = ($tau - $onset) / ($peak - $onset);
-            } else {
-                $f = ($duration - $tau) / ($duration - $peak);
-            }
-            if ($f > 0) {
+            if ($tau >= 0 && $tau < $duration) {
+                $f = ($ka / ($ka - $ke)) * (exp(-$ke * $tau) - exp(-$ka * $tau));
                 $iob += $f * $e['units'];
             }
         }
@@ -105,6 +101,7 @@ function compute_iob_points(array $insulin, callable $to_minutes, int $step = 5)
     }
     return $points;
 }
+
 
 
 
