@@ -63,7 +63,7 @@ $glucose_spikes = query_rows($mysqli, $glucose_spikes_sql, [$date, $threshold_mg
 $glucose_sql = "SELECT dt.ts, fg.sgv
                 FROM fact_glucose fg
                 JOIN dim_time dt ON fg.time_id = dt.time_id
-                WHERE dt.date = ?
+                WHERE dt.date = ? AND fg.sgv > 39 -- filter out sensor errors
                 ORDER BY dt.ts";
 $glucose = query_rows($mysqli, $glucose_sql, [$date]);
 
@@ -71,12 +71,33 @@ $minutes = function($ts) { return intval(date('H', $ts)) * 60 + intval(date('i',
 $glucose_points = array_map(function($g) use ($minutes, $mgdl_to_mmol) {
     return ['x' => $minutes($g['ts']), 'y' => $mgdl_to_mmol((float)$g['sgv'])];
 }, $glucose);
-$meal_points = array_map(function($m) use ($minutes) {
-    return ['x' => $minutes($m['ts']), 'y' => (float)$m['carbs']];
-}, $meals);
-$insulin_points = array_map(function($i) use ($minutes) {
-    return ['x' => $minutes($i['ts']), 'y' => (float)$i['units']];
-}, $insulin);
+$meal_points = [];
+foreach ($meals as $m) {
+    $x = $minutes($m['ts']);
+    $closest = null;
+    $dist = PHP_INT_MAX;
+    foreach ($glucose_points as $g) {
+        $d = abs($g['x'] - $x);
+        if ($d < $dist) { $dist = $d; $closest = $g['y']; }
+    }
+    if ($closest !== null) {
+        $meal_points[] = ['x' => $x, 'y' => $closest];
+    }
+}
+
+$insulin_points = [];
+foreach ($insulin as $i) {
+    $x = $minutes($i['ts']);
+    $closest = null;
+    $dist = PHP_INT_MAX;
+    foreach ($glucose_points as $g) {
+        $d = abs($g['x'] - $x);
+        if ($d < $dist) { $dist = $d; $closest = $g['y']; }
+    }
+    if ($closest !== null) {
+        $insulin_points[] = ['x' => $x, 'y' => $closest];
+    }
+}
 
 $mysqli->close();
 ?>
@@ -108,30 +129,41 @@ var chart = new Chart(ctx, {
             {
                 label: 'Glucose (mmol/L)',
                 data: glucoseData,
-                borderColor: 'rgba(75, 192, 192, 1)',
                 tension: 0.1,
                 fill: false,
                 yAxisID: 'y',
                 parsing: false,
-                pointRadius: 0
+                pointRadius: 4,
+                segment: {
+                    borderColor: ctx => {
+                        const y = ctx.p0.parsed.y;
+                        if (y > 8.4) return 'red';
+                        if (y < 3.7) return 'blue';
+                        return 'rgba(75, 192, 192, 1)';
+                    }
+                }
             },
             {
-                label: 'Meals (carbs)',
+                label: 'Meals',
                 data: mealData,
                 type: 'scatter',
                 backgroundColor: 'rgba(255, 99, 132, 1)',
                 borderColor: 'rgba(255, 99, 132, 1)',
-                yAxisID: 'y1',
-                parsing: false
+                yAxisID: 'y',
+                parsing: false,
+                pointRadius: 5,
+                showLine: false
             },
             {
-                label: 'Insulin (units)',
+                label: 'Insulin',
                 data: insulinData,
                 type: 'scatter',
                 backgroundColor: 'rgba(54, 162, 235, 1)',
                 borderColor: 'rgba(54, 162, 235, 1)',
-                yAxisID: 'y1',
-                parsing: false
+                yAxisID: 'y',
+                parsing: false,
+                pointRadius: 5,
+                showLine: false
             }
         ]
     },
@@ -153,13 +185,9 @@ var chart = new Chart(ctx, {
             },
             y: {
                 display: true,
-                title: { display: true, text: 'mmol/L' }
-            },
-            y1: {
-                display: true,
-                position: 'right',
-                grid: { drawOnChartArea: false },
-                title: { display: true, text: 'Units/Carbs' }
+                title: { display: true, text: 'mmol/L' },
+                min: 2,
+                max: 14
             }
         }
     }
