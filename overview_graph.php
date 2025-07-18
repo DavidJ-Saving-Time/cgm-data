@@ -68,6 +68,40 @@ $glucose_sql = "SELECT dt.ts, fg.sgv
 $glucose = query_rows($mysqli, $glucose_sql, [$date]);
 
 $minutes = function($ts) { return intval(date('H', $ts)) * 60 + intval(date('i', $ts)); };
+
+
+function compute_iob_points(array $insulin, callable $to_minutes, int $step = 5) {
+    $onset = 10;
+    $peak = 75;
+    $duration = 300;
+
+    $entries = array_map(function($i) use ($to_minutes) {
+        return ['min' => $to_minutes($i['ts']), 'units' => (float)$i['units']];
+    }, $insulin);
+
+    $points = [];
+    for ($t = 0; $t <= 1440; $t += $step) {
+        $iob = 0.0;
+        foreach ($entries as $e) {
+            $tau = $t - $e['min'];
+            if ($tau < $onset || $tau >= $duration) {
+                $f = 0.0;
+            } elseif ($tau < $peak) {
+                $f = ($tau - $onset) / ($peak - $onset);
+            } else {
+                $f = ($duration - $tau) / ($duration - $peak);
+            }
+            if ($f > 0) {
+                $iob += $f * $e['units'];
+            }
+        }
+        $points[] = ['x' => $t, 'y' => $iob];
+    }
+    return $points;
+}
+
+
+
 $glucose_points = array_map(function($g) use ($minutes, $mgdl_to_mmol) {
     return ['x' => $minutes($g['ts']), 'y' => $mgdl_to_mmol((float)$g['sgv'])];
 }, $glucose);
@@ -98,7 +132,7 @@ foreach ($insulin as $i) {
         $insulin_points[] = ['x' => $x, 'y' => $closest, 'units' => (float)$i['units']];
     }
 }
-
+$iob_points = compute_iob_points($insulin, $minutes);
 $mysqli->close();
 ?>
 <!DOCTYPE html>
@@ -121,7 +155,7 @@ var ctx = document.getElementById('glucoseChart').getContext('2d');
 var glucoseData = <?php echo json_encode($glucose_points); ?>;
 var mealData = <?php echo json_encode($meal_points); ?>;
 var insulinData = <?php echo json_encode($insulin_points); ?>;
-
+var iobData = <?php echo json_encode($iob_points); ?>;
 var chart = new Chart(ctx, {
     type: 'line',
     data: {
