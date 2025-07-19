@@ -298,20 +298,26 @@ $interp = function(array $points, int $t) use ($step) {
 $iob_at_time = function(int $t) use ($iob_points, $interp) { return $interp($iob_points, $t); };
 $cob_at_time = function(int $t) use ($cob_points, $interp) { return $interp($cob_points, $t); };
 
-// Incremental prediction model
+// Incremental prediction model based on change in IOB/COB over time
 $predicted_points = [];
 if (!empty($glucose_points)) {
     $predicted_y = $glucose_points[0]['y'];
     $predicted_points[] = ['x' => 0, 'y' => $predicted_y];
     for ($t = $step; $t <= 1440; $t += $step) {
         $bucket = $time_bucket($t);
-        $iob = $iob_at_time($t);
-        $cob = $cob_at_time($t);
-        // Change in BG is driven by the balance of carbs and insulin. Convert
-        // carbs to an insulin equivalent using the carb ratio and then apply
-        // insulin sensitivity.
-        $insulin_equiv = ($cob / $metrics[$bucket]['carb_ratio']) - $iob;
-        $predicted_y += $insulin_equiv * $metrics[$bucket]['insulin_sensitivity'];
+        $cr = $metrics[$bucket]['carb_ratio'] ?? 0;
+        $is = $metrics[$bucket]['insulin_sensitivity'] ?? 0;
+        if ($cr <= 0 || $is <= 0) {
+            $predicted_points[] = ['x' => $t, 'y' => null];
+            continue;
+        }
+        $delta_iob = $iob_at_time($t - $step) - $iob_at_time($t);
+        $delta_cob = $cob_at_time($t - $step) - $cob_at_time($t);
+        $net_units = ($delta_cob / $cr) - $delta_iob;
+        $predicted_y += $net_units * $is;
+        if ($predicted_y < 0) {
+            $predicted_y = 0;
+        }
         $predicted_points[] = ['x' => $t, 'y' => $predicted_y];
     }
 }
