@@ -21,7 +21,15 @@ cur = mysql_conn.cursor()
 
 # Maximum difference between a meal and an insulin injection in seconds.
 # Doses within this window are associated with the meal.
-TIME_WINDOW = 50 * 60  # 30 minutes
+TIME_WINDOW = 50 * 60  # 50 minutes
+
+# Acceptable pre-meal glucose range (mg/dL).
+# Corresponds to 5 – 1.5 mmol/L = 63 mg/dL and 5 + 1.5 mmol/L = 117 mg/dL.
+PRE_MEAL_MIN = 63
+PRE_MEAL_MAX = 117
+
+# Time window prior to the meal that must be free of correction boluses (seconds).
+NO_CORRECTION_WINDOW = 2 * 3600
 
 
 def parse_date(value: str):
@@ -64,6 +72,29 @@ def nearest_glucose(ts: int, before: bool = True, offset: int = 0):
     return row[0] if row else None
 
 
+def correction_bolus_before(ts: int) -> bool:
+    """Return True if a bolus injection occurred in the NO_CORRECTION_WINDOW
+    before *ts* (excluding the TIME_WINDOW immediately preceding the meal)."""
+
+    start = ts - NO_CORRECTION_WINDOW
+    end = ts - TIME_WINDOW
+    if end <= start:
+        return False
+
+    cur.execute(
+        """
+        SELECT 1
+        FROM fact_insulin fi
+        JOIN dim_insulin_type dit ON fi.insulin_type_id = dit.insulin_type_id
+        WHERE dit.insulin_class = 'bolus'
+          AND fi.ts BETWEEN %s AND %s
+        LIMIT 1
+        """,
+        (start, end),
+    )
+    return cur.fetchone() is not None
+
+
 # Query meals paired with insulin doses based on temporal proximity
 query = """
     SELECT m.treatment_id, m.ts, m.carbs, fi.units, dt.hour
@@ -90,7 +121,11 @@ stats = defaultdict(lambda: defaultdict(list))
 for tid, ts, carbs, units, hour in cur.fetchall():
     if units is None or units == 0:
         continue
+    if correction_bolus_before(ts):
+        continue
     pre = nearest_glucose(ts, before=True)
+    if pre is None or not (PRE_MEAL_MIN <= pre <= PRE_MEAL_MAX):
+        continue
     post = nearest_glucose(ts, before=False, offset=2 * 3600)
     bucket = time_bucket(hour)
 
