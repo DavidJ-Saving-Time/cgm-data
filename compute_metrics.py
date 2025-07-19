@@ -99,8 +99,14 @@ def correction_bolus_before(ts: int) -> bool:
 
 
 # Query meals paired with insulin doses based on temporal proximity
+# Each meal can have multiple associated insulin doses. Sum the units so that
+# each meal contributes a single data point with the total bolus amount.
 query = """
-    SELECT m.treatment_id, m.ts, m.carbs, fi.units, dt.hour
+    SELECT m.treatment_id,
+           m.ts,
+           m.carbs,
+           SUM(fi.units) AS units,
+           dt.hour
     FROM fact_meal m
     JOIN fact_insulin fi ON fi.ts BETWEEN m.ts - %s AND m.ts + %s
     JOIN dim_insulin_type dit ON fi.insulin_type_id = dit.insulin_type_id
@@ -116,6 +122,9 @@ if args.end:
     params.append(args.end.isoformat())
 if conditions:
     query += " WHERE " + " AND ".join(conditions)
+
+# Aggregate insulin units for each meal
+query += " GROUP BY m.treatment_id, m.ts, m.carbs, dt.hour"
 
 cur.execute(query, params)
 
