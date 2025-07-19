@@ -25,7 +25,7 @@ Several utilities also use `MONGODBKEY` to connect to a Nightscout MongoDB insta
 
 ## Analysis tools
 
-- **`compute_metrics.py`** – compute average insulin sensitivity, carbohydrate ratio and absorption by time of day. Accepts optional `--start` and `--end` dates (`YYYY-MM-DD`).
+- **`compute_metrics.py`** – compute average insulin sensitivity, carbohydrate ratio and absorption by time of day. Insulin sensitivity is reported in mmol/L per unit. Accepts optional `--start` and `--end` dates (`YYYY-MM-DD`).
 - **`verify_time_consistency.py`** – check that timestamps in the star schema match the source tables.
 
 ## PHP helpers

@@ -28,6 +28,9 @@ TIME_WINDOW = 50 * 60  # 50 minutes
 PRE_MEAL_MIN = 63
 PRE_MEAL_MAX = 117
 
+# Conversion factor from mg/dL to mmol/L.
+MGDL_TO_MMOLL = 1 / 18
+
 # Time window prior to the meal that must be free of correction boluses (seconds).
 NO_CORRECTION_WINDOW = 2 * 3600
 
@@ -134,7 +137,7 @@ for tid, ts, carbs, units, hour in cur.fetchall():
         if pre is not None and post is not None:
             stats[bucket]["carb_absorption"].append((post - pre) / carbs)
     if pre is not None and post is not None:
-        stats[bucket]["insulin_sensitivity"].append((pre - post) / units)
+        stats[bucket]["insulin_sensitivity"].append((pre - post) * MGDL_TO_MMOLL / units)
 
 
 for bucket in ["morning", "afternoon", "evening"]:
@@ -145,7 +148,8 @@ for bucket in ["morning", "afternoon", "evening"]:
         continue
     for metric, values in data.items():
         avg_val = sum(values) / len(values)
-        print(f"{metric}: {avg_val:.2f} (n={len(values)})")
+        unit = " mmol/L per U" if metric == "insulin_sensitivity" else ""
+        print(f"{metric}: {avg_val:.2f}{unit} (n={len(values)})")
 
 cur.close()
 mysql_conn.close()
