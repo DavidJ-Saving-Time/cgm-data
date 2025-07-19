@@ -69,10 +69,11 @@ query = """
     SELECT m.treatment_id, m.ts, m.carbs, fi.units, dt.hour
     FROM fact_meal m
     JOIN fact_insulin fi ON fi.ts BETWEEN m.ts - %s AND m.ts + %s
+    JOIN dim_insulin_type dit ON fi.insulin_type_id = dit.insulin_type_id
     JOIN dim_time dt ON m.time_id = dt.time_id
 """
 params = [TIME_WINDOW, TIME_WINDOW]
-conditions = []
+conditions = ["dit.insulin_class = 'bolus'"]
 if args.start:
     conditions.append("dt.date >= %s")
     params.append(args.start.isoformat())
