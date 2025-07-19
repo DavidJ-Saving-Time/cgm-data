@@ -122,6 +122,118 @@ function compute_cob_points(array $meals, callable $to_minutes, int $step = 5) {
     return $points;
 }
 
+// Compute average carbohydrate ratio and insulin sensitivity for
+// morning, afternoon and evening buckets using logic from
+// compute_metrics.py.
+function compute_metrics(mysqli $mysqli): array {
+    $TIME_WINDOW = 50 * 60;
+    $POST_OFFSET = 2 * 3600;
+    $PRE_WINDOW = 15 * 60;
+    $POST_WINDOW = 15 * 60;
+    $NO_CORRECTION_BEFORE = 2 * 3600;
+    $NO_CORRECTION_AFTER = 3 * 3600;
+    $PRE_MEAL_MIN = 63;
+    $PRE_MEAL_MAX = 117;
+    $MGDL_TO_MMOLL = 1 / 18;
+
+    $time_bucket = function (int $hour): string {
+        if ($hour >= 4 && $hour < 12) return 'morning';
+        if ($hour >= 12 && $hour < 18) return 'afternoon';
+        return 'evening';
+    };
+
+    $avg_glucose = function (int $ts, bool $before = true, int $offset = 0, int $window = 900) use ($mysqli) {
+        if ($before) {
+            $start = $ts - $offset - $window;
+            $end = $ts - $offset;
+        } else {
+            $start = $ts + $offset;
+            $end = $ts + $offset + $window;
+        }
+        $stmt = $mysqli->prepare('SELECT AVG(sgv) FROM fact_glucose WHERE ts BETWEEN ? AND ?');
+        $stmt->bind_param('ii', $start, $end);
+        $stmt->execute();
+        $stmt->bind_result($avg);
+        $stmt->fetch();
+        $stmt->close();
+        return $avg !== null ? (float)$avg : null;
+    };
+
+    $correction_bolus_before = function (int $ts) use ($mysqli, $NO_CORRECTION_BEFORE, $TIME_WINDOW) {
+        $start = $ts - $NO_CORRECTION_BEFORE;
+        $end = $ts - $TIME_WINDOW;
+        if ($end <= $start) return false;
+        $sql = "SELECT 1 FROM fact_insulin fi JOIN dim_insulin_type dit ON fi.insulin_type_id = dit.insulin_type_id WHERE dit.insulin_class = 'bolus' AND fi.ts BETWEEN ? AND ? LIMIT 1";
+        $stmt = $mysqli->prepare($sql);
+        $stmt->bind_param('ii', $start, $end);
+        $stmt->execute();
+        $stmt->store_result();
+        $has = $stmt->num_rows > 0;
+        $stmt->close();
+        return $has;
+    };
+
+    $correction_bolus_after = function (int $ts) use ($mysqli, $NO_CORRECTION_AFTER, $TIME_WINDOW) {
+        $start = $ts + $TIME_WINDOW;
+        $end = $ts + $NO_CORRECTION_AFTER;
+        if ($end <= $start) return false;
+        $sql = "SELECT 1 FROM fact_insulin fi JOIN dim_insulin_type dit ON fi.insulin_type_id = dit.insulin_type_id WHERE dit.insulin_class = 'bolus' AND fi.ts BETWEEN ? AND ? LIMIT 1";
+        $stmt = $mysqli->prepare($sql);
+        $stmt->bind_param('ii', $start, $end);
+        $stmt->execute();
+        $stmt->store_result();
+        $has = $stmt->num_rows > 0;
+        $stmt->close();
+        return $has;
+    };
+
+    $sql = "SELECT m.treatment_id, m.ts, m.carbs, SUM(fi.units) AS units, dt.hour
+            FROM fact_meal m
+            JOIN fact_insulin fi ON fi.ts BETWEEN m.ts - ? AND m.ts + ?
+            JOIN dim_insulin_type dit ON fi.insulin_type_id = dit.insulin_type_id
+            JOIN dim_time dt ON m.time_id = dt.time_id
+            WHERE dit.insulin_class = 'bolus'
+            GROUP BY m.treatment_id, m.ts, m.carbs, dt.hour";
+    $stmt = $mysqli->prepare($sql);
+    $stmt->bind_param('ii', $TIME_WINDOW, $TIME_WINDOW);
+    $stmt->execute();
+    $stmt->bind_result($tid, $ts, $carbs, $units, $hour);
+
+    $stats = [];
+    while ($stmt->fetch()) {
+        if ($units === null || $units == 0) continue;
+        if ($correction_bolus_before($ts)) continue;
+        $pre = $avg_glucose($ts, true, 0, $PRE_WINDOW);
+        if ($pre === null || $pre < $PRE_MEAL_MIN || $pre > $PRE_MEAL_MAX) continue;
+        if ($correction_bolus_after($ts)) continue;
+        $post = $avg_glucose($ts, false, $POST_OFFSET, $POST_WINDOW);
+
+        $bucket = $time_bucket($hour);
+
+        if ($carbs) {
+            $stats[$bucket]['carb_ratio'][] = $carbs / $units;
+            if ($post !== null) {
+                $stats[$bucket]['carb_absorption'][] = (($post - $pre) * $MGDL_TO_MMOLL) / $carbs;
+            }
+        }
+        if ($post !== null) {
+            $stats[$bucket]['insulin_sensitivity'][] = (($pre - $post) * $MGDL_TO_MMOLL) / $units;
+        }
+    }
+    $stmt->close();
+
+    $metrics = [];
+    foreach (['morning', 'afternoon', 'evening'] as $bucket) {
+        $cr = $stats[$bucket]['carb_ratio'] ?? [];
+        $is = $stats[$bucket]['insulin_sensitivity'] ?? [];
+        $metrics[$bucket] = [
+            'carb_ratio' => $cr ? array_sum($cr) / count($cr) : 0,
+            'insulin_sensitivity' => $is ? array_sum($is) / count($is) : 0,
+        ];
+    }
+    return $metrics;
+}
+
 
 
 
@@ -155,22 +267,9 @@ foreach ($bolus_insulin as $i) {
         $insulin_points[] = ['x' => $x, 'y' => $closest, 'units' => (float)$i['units']];
     }
 }
-$metrics = [
-    // Averaged values from compute_metrics.py (negative sensitivities flipped
-    // to keep the effect direction consistent)
-    'morning' => [
-        'carb_ratio' => 1.37,
-        'insulin_sensitivity' => 0.11
-    ],
-    'afternoon' => [
-        'carb_ratio' => 5.26,
-        'insulin_sensitivity' => 0.12
-    ],
-    'evening' => [
-        'carb_ratio' => 5.05,
-        'insulin_sensitivity' => 0.25
-    ]
-];
+
+// Derive carb ratio and insulin sensitivity metrics from the database
+$metrics = compute_metrics($mysqli);
 
 // Map minutes past midnight to a time bucket
 $time_bucket = function(int $min): string {
@@ -336,6 +435,17 @@ var chart = new Chart(ctx, {
     }
 });
 </script>
+<h2>Computed Metrics</h2>
+<table border="1" cellpadding="4" cellspacing="0">
+<tr><th>Time of Day</th><th>Carb Ratio</th><th>Insulin Sensitivity</th></tr>
+<?php foreach ($metrics as $bucket => $vals): ?>
+<tr>
+    <td><?php echo htmlspecialchars($bucket); ?></td>
+    <td><?php echo number_format($vals['carb_ratio'], 2); ?></td>
+    <td><?php echo number_format($vals['insulin_sensitivity'], 2); ?></td>
+</tr>
+<?php endforeach; ?>
+</table>
 <h2>Meals</h2>
 <?php if ($meals): ?>
 <ul>
