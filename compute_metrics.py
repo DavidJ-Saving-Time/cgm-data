@@ -21,7 +21,7 @@ cur = mysql_conn.cursor()
 
 # Maximum difference between a meal and an insulin injection in seconds.
 # Doses within this window are associated with the meal.
-TIME_WINDOW = 30 * 60  # 30 minutes
+TIME_WINDOW = 50 * 60  # 30 minutes
 
 
 def parse_date(value: str):
