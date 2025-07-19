@@ -197,6 +197,7 @@ function compute_metrics(mysqli $mysqli): array {
     $stmt = $mysqli->prepare($sql);
     $stmt->bind_param('ii', $TIME_WINDOW, $TIME_WINDOW);
     $stmt->execute();
+    $stmt->store_result();
     $stmt->bind_result($tid, $ts, $carbs, $units, $hour);
 
     $stats = [];
