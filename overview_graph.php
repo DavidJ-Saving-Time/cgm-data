@@ -135,6 +135,50 @@ foreach ($insulin as $i) {
         $insulin_points[] = ['x' => $x, 'y' => $closest, 'units' => (float)$i['units']];
     }
 }
+$metrics = [
+    'morning' => ['carb_absorption' => -0.06, 'insulin_sensitivity' => 0.11],
+    'afternoon' => ['carb_absorption' => 0.01, 'insulin_sensitivity' => -0.12],
+    'evening' => ['carb_absorption' => 0.25, 'insulin_sensitivity' => -0.25]
+];
+
+// Map minutes past midnight to a time bucket
+$time_bucket = function(int $min): string {
+    $hour = intdiv($min, 60);
+    if ($hour >= 4 && $hour < 12) return 'morning';
+    if ($hour >= 12 && $hour < 18) return 'afternoon';
+    return 'evening';
+};
+
+// Combine meal and insulin events ordered by time
+$events = [];
+foreach ($meal_points as $m) {
+    $events[] = ['x' => $m['x'], 'type' => 'meal', 'carbs' => $m['carbs']];
+}
+foreach ($insulin_points as $i) {
+    $events[] = ['x' => $i['x'], 'type' => 'insulin', 'units' => $i['units']];
+}
+usort($events, function($a, $b) { return $a['x'] <=> $b['x']; });
+
+$predicted_points = [];
+if (!empty($glucose_points)) {
+    $predicted_y = $glucose_points[0]['y'];
+    $predicted_points[] = ['x' => $glucose_points[0]['x'], 'y' => $predicted_y];
+    $ei = 0;
+    for ($gi = 1; $gi < count($glucose_points); $gi++) {
+        $x = $glucose_points[$gi]['x'];
+        while ($ei < count($events) && $events[$ei]['x'] <= $x) {
+            $bucket = $time_bucket($events[$ei]['x']);
+            if ($events[$ei]['type'] === 'meal') {
+                $predicted_y += $events[$ei]['carbs'] * $metrics[$bucket]['carb_absorption'];
+            } else {
+                $predicted_y -= $events[$ei]['units'] * $metrics[$bucket]['insulin_sensitivity'];
+            }
+            $ei++;
+        }
+        $predicted_points[] = ['x' => $x, 'y' => $predicted_y];
+    }
+}
+$iob_points = compute_iob_points($bolus_insulin, $minutes);
 $iob_points = compute_iob_points($bolus_insulin, $minutes);
 $mysqli->close();
 ?>
@@ -159,6 +203,7 @@ var glucoseData = <?php echo json_encode($glucose_points); ?>;
 var mealData = <?php echo json_encode($meal_points); ?>;
 var insulinData = <?php echo json_encode($insulin_points); ?>;
 var iobData = <?php echo json_encode($iob_points); ?>;
+var predictedData = <?php echo json_encode($predicted_points); ?>;
 var chart = new Chart(ctx, {
     type: 'line',
     data: {
@@ -207,6 +252,16 @@ var chart = new Chart(ctx, {
                 parsing: false,
                 pointRadius: ctx => 2 + Math.sqrt(ctx.raw.units || 0),
                 showLine: false
+            },
+            {
+                label: 'Predicted',
+                data: predictedData,
+                borderColor: 'rgba(153, 102, 255, 1)',
+                tension: 0.1,
+                fill: false,
+                yAxisID: 'y',
+                parsing: false,
+                pointRadius: 0
             },
             {
                 label: 'IOB (units)',
