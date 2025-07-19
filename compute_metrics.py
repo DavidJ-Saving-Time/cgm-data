@@ -1,6 +1,8 @@
 import os
 from collections import defaultdict
 from datetime import datetime
+from statistics import median, stdev
+from typing import Optional
 import argparse
 import pymysql
 
@@ -19,9 +21,12 @@ mysql_conn = pymysql.connect(
 )
 cur = mysql_conn.cursor()
 
-# Maximum difference between a meal and an insulin injection in seconds.
-# Doses within this window are associated with the meal.
-TIME_WINDOW = 50 * 60  # 50 minutes
+# Default settings (seconds)
+DEFAULT_TIME_WINDOW = 50 * 60  # 50 minutes
+DEFAULT_POST_OFFSET = 2 * 3600  # 2 hours
+DEFAULT_GLUCOSE_WINDOW = 15 * 60  # 15 minutes
+DEFAULT_NO_CORRECTION_BEFORE = 2 * 3600  # 2 hours
+DEFAULT_NO_CORRECTION_AFTER = 3 * 3600  # 3 hours
 
 # Acceptable pre-meal glucose range (mg/dL).
 # Corresponds to 5 – 1.5 mmol/L = 63 mg/dL and 5 + 1.5 mmol/L = 117 mg/dL.
@@ -30,9 +35,6 @@ PRE_MEAL_MAX = 117
 
 # Conversion factor from mg/dL to mmol/L.
 MGDL_TO_MMOLL = 1 / 18
-
-# Time window prior to the meal that must be free of correction boluses (seconds).
-NO_CORRECTION_WINDOW = 2 * 3600
 
 
 def parse_date(value: str):
@@ -47,7 +49,50 @@ def parse_date(value: str):
 parser = argparse.ArgumentParser(description="Compute insulin/meal metrics")
 parser.add_argument("--start", type=parse_date, help="Start date YYYY-MM-DD")
 parser.add_argument("--end", type=parse_date, help="End date YYYY-MM-DD")
+parser.add_argument(
+    "--time-window",
+    type=int,
+    default=50,
+    help="Meal-insulin association window in minutes (default: 50)",
+)
+parser.add_argument(
+    "--post-offset",
+    type=int,
+    default=120,
+    help="Minutes after meal for post-meal glucose (default: 120)",
+)
+parser.add_argument(
+    "--pre-window",
+    type=int,
+    default=15,
+    help="Minutes to average glucose before meal (default: 15)",
+)
+parser.add_argument(
+    "--post-window",
+    type=int,
+    default=15,
+    help="Minutes to average glucose after meal offset (default: 15)",
+)
+parser.add_argument(
+    "--nocorr-before",
+    type=int,
+    default=120,
+    help="Minutes before meal that must be correction-bolus free (default: 120)",
+)
+parser.add_argument(
+    "--nocorr-after",
+    type=int,
+    default=180,
+    help="Minutes after meal that must be correction-bolus free (default: 180)",
+)
 args = parser.parse_args()
+
+TIME_WINDOW = args.time_window * 60
+POST_OFFSET = args.post_offset * 60
+PRE_WINDOW = args.pre_window * 60
+POST_WINDOW = args.post_window * 60
+NO_CORRECTION_BEFORE = args.nocorr_before * 60
+NO_CORRECTION_AFTER = args.nocorr_after * 60
 
 
 # Map an hour in dim_time to a time bucket.
@@ -60,27 +105,63 @@ def time_bucket(hour: int) -> str:
     return "evening"
 
 
-def nearest_glucose(ts: int, before: bool = True, offset: int = 0):
+def avg_glucose(
+    ts: int,
+    *,
+    before: bool = True,
+    offset: int = 0,
+    window: int = DEFAULT_GLUCOSE_WINDOW,
+) -> Optional[float]:
+    """Return the average glucose in a window around *ts*.
+
+    If *before* is True the window ends at ``ts - offset``. Otherwise it starts
+    at ``ts + offset``. The window size is defined by *window* seconds.
+    """
+
     if before:
-        cur.execute(
-            "SELECT sgv FROM fact_glucose WHERE ts <= %s ORDER BY ts DESC LIMIT 1",
-            (ts - offset,),
-        )
+        start = ts - offset - window
+        end = ts - offset
     else:
-        cur.execute(
-            "SELECT sgv FROM fact_glucose WHERE ts >= %s ORDER BY ts ASC LIMIT 1",
-            (ts + offset,),
-        )
+        start = ts + offset
+        end = ts + offset + window
+
+    cur.execute(
+        "SELECT AVG(sgv) FROM fact_glucose WHERE ts BETWEEN %s AND %s",
+        (start, end),
+    )
     row = cur.fetchone()
-    return row[0] if row else None
+    return row[0] if row and row[0] is not None else None
 
 
 def correction_bolus_before(ts: int) -> bool:
-    """Return True if a bolus injection occurred in the NO_CORRECTION_WINDOW
-    before *ts* (excluding the TIME_WINDOW immediately preceding the meal)."""
-
-    start = ts - NO_CORRECTION_WINDOW
+    """Return True if a bolus injection occurred in the NO_CORRECTION_BEFORE
+    window prior to *ts* (excluding the TIME_WINDOW immediately preceding the
+    meal)."""
+    start = ts - NO_CORRECTION_BEFORE
     end = ts - TIME_WINDOW
+    if end <= start:
+        return False
+
+    cur.execute(
+        """
+        SELECT 1
+        FROM fact_insulin fi
+        JOIN dim_insulin_type dit ON fi.insulin_type_id = dit.insulin_type_id
+        WHERE dit.insulin_class = 'bolus'
+          AND fi.ts BETWEEN %s AND %s
+        LIMIT 1
+        """,
+        (start, end),
+    )
+    return cur.fetchone() is not None
+
+
+def correction_bolus_after(ts: int) -> bool:
+    """Return True if a bolus injection occurred within NO_CORRECTION_AFTER
+    seconds after *ts* (excluding the TIME_WINDOW immediately following the meal)."""
+
+    start = ts + TIME_WINDOW
+    end = ts + NO_CORRECTION_AFTER
     if end <= start:
         return False
 
@@ -135,16 +216,18 @@ for tid, ts, carbs, units, hour in cur.fetchall():
         continue
     if correction_bolus_before(ts):
         continue
-    pre = nearest_glucose(ts, before=True)
+    pre = avg_glucose(ts, before=True, window=PRE_WINDOW)
     if pre is None or not (PRE_MEAL_MIN <= pre <= PRE_MEAL_MAX):
         continue
-    post = nearest_glucose(ts, before=False, offset=2 * 3600)
+    if correction_bolus_after(ts):
+        continue
+    post = avg_glucose(ts, before=False, offset=POST_OFFSET, window=POST_WINDOW)
     bucket = time_bucket(hour)
 
     if carbs:
         stats[bucket]["carb_ratio"].append(carbs / units)
         if pre is not None and post is not None:
-            stats[bucket]["carb_absorption"].append((post - pre) / carbs)
+            stats[bucket]["carb_absorption"].append((post - pre) * MGDL_TO_MMOLL / carbs)
     if pre is not None and post is not None:
         stats[bucket]["insulin_sensitivity"].append((pre - post) * MGDL_TO_MMOLL / units)
 
@@ -157,8 +240,12 @@ for bucket in ["morning", "afternoon", "evening"]:
         continue
     for metric, values in data.items():
         avg_val = sum(values) / len(values)
+        med_val = median(values)
+        sd_val = stdev(values) if len(values) > 1 else 0.0
         unit = " mmol/L per U" if metric == "insulin_sensitivity" else ""
-        print(f"{metric}: {avg_val:.2f}{unit} (n={len(values)})")
+        print(
+            f"{metric}: {avg_val:.2f}{unit} ±{sd_val:.2f} (median {med_val:.2f}, n={len(values)})"
+        )
 
 cur.close()
 mysql_conn.close()
