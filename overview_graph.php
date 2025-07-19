@@ -156,9 +156,20 @@ foreach ($bolus_insulin as $i) {
     }
 }
 $metrics = [
-    'morning' => ['carb_absorption' => -0.06, 'insulin_sensitivity' => 0.11],
-    'afternoon' => ['carb_absorption' => 0.01, 'insulin_sensitivity' => -0.12],
-    'evening' => ['carb_absorption' => 0.25, 'insulin_sensitivity' => -0.25]
+    // Averaged values from compute_metrics.py (negative sensitivities flipped
+    // to keep the effect direction consistent)
+    'morning' => [
+        'carb_ratio' => 1.37,
+        'insulin_sensitivity' => 0.11
+    ],
+    'afternoon' => [
+        'carb_ratio' => 5.26,
+        'insulin_sensitivity' => 0.12
+    ],
+    'evening' => [
+        'carb_ratio' => 5.05,
+        'insulin_sensitivity' => 0.25
+    ]
 ];
 
 // Map minutes past midnight to a time bucket
@@ -196,7 +207,11 @@ if (!empty($glucose_points)) {
         $bucket = $time_bucket($t);
         $iob = $iob_at_time($t);
         $cob = $cob_at_time($t);
-        $predicted_y += $cob * $metrics[$bucket]['carb_absorption'] - $iob * $metrics[$bucket]['insulin_sensitivity'];
+        // Change in BG is driven by the balance of carbs and insulin. Convert
+        // carbs to an insulin equivalent using the carb ratio and then apply
+        // insulin sensitivity.
+        $insulin_equiv = ($cob / $metrics[$bucket]['carb_ratio']) - $iob;
+        $predicted_y += $insulin_equiv * $metrics[$bucket]['insulin_sensitivity'];
         $predicted_points[] = ['x' => $t, 'y' => $predicted_y];
     }
 }
