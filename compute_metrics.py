@@ -130,7 +130,9 @@ def avg_glucose(
         (start, end),
     )
     row = cur.fetchone()
-    return row[0] if row and row[0] is not None else None
+    if row and row[0] is not None:
+        return float(row[0])
+    return None
 
 
 def correction_bolus_before(ts: int) -> bool:
