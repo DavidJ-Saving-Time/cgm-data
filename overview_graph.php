@@ -123,7 +123,7 @@ foreach ($meals as $m) {
 }
 
 $insulin_points = [];
-foreach ($insulin as $i) {
+foreach ($bolus_insulin as $i) {
     $x = $minutes($i['ts']);
     $closest = null;
     $dist = PHP_INT_MAX;
@@ -144,18 +144,18 @@ $metrics = [
 // Map minutes past midnight to a time bucket
 $time_bucket = function(int $min): string {
     $hour = intdiv($min, 60);
-    if ($hour >= 4 && $hour < 12) return 'morning';
-    if ($hour >= 12 && $hour < 18) return 'afternoon';
+    if ($hour >= 5 && $hour < 11) return 'morning';
+    if ($hour >= 11 && $hour < 13) return 'afternoon';
     return 'evening';
 };
 
 // Combine meal and insulin events ordered by time
 $events = [];
 foreach ($meal_points as $m) {
-    $events[] = ['x' => $m['x'], 'type' => 'meal', 'carbs' => $m['carbs']];
+    $events[] = ['x' => $m['x'], 'bg' => $m['y'], 'type' => 'meal', 'carbs' => $m['carbs']];
 }
 foreach ($insulin_points as $i) {
-    $events[] = ['x' => $i['x'], 'type' => 'insulin', 'units' => $i['units']];
+    $events[] = ['x' => $i['x'], 'bg' => $i['y'], 'type' => 'insulin', 'units' => $i['units']];
 }
 usort($events, function($a, $b) { return $a['x'] <=> $b['x']; });
 
@@ -168,10 +168,11 @@ if (!empty($glucose_points)) {
         $x = $glucose_points[$gi]['x'];
         while ($ei < count($events) && $events[$ei]['x'] <= $x) {
             $bucket = $time_bucket($events[$ei]['x']);
+            $start_bg = $events[$ei]['bg'];
             if ($events[$ei]['type'] === 'meal') {
-                $predicted_y += $events[$ei]['carbs'] * $metrics[$bucket]['carb_absorption'];
+                $predicted_y = $start_bg + $events[$ei]['carbs'] * $metrics[$bucket]['carb_absorption'];
             } else {
-                $predicted_y -= $events[$ei]['units'] * $metrics[$bucket]['insulin_sensitivity'];
+                $predicted_y = $start_bg - $events[$ei]['units'] * $metrics[$bucket]['insulin_sensitivity'];
             }
             $ei++;
         }
