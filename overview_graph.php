@@ -102,6 +102,26 @@ function compute_iob_points(array $insulin, callable $to_minutes, int $step = 5)
     return $points;
 }
 
+function compute_cob_points(array $meals, callable $to_minutes, int $step = 5) {
+    $duration = 120; // minutes until carbs fully absorbed
+    $entries = array_map(function($m) use ($to_minutes) {
+        return ['min' => $to_minutes($m['ts']), 'carbs' => (float)$m['carbs']];
+    }, $meals);
+
+    $points = [];
+    for ($t = 0; $t <= 1440; $t += $step) {
+        $cob = 0.0;
+        foreach ($entries as $e) {
+            $tau = $t - $e['min'];
+            if ($tau >= 0 && $tau < $duration) {
+                $cob += $e['carbs'] * (1 - $tau / $duration);
+            }
+        }
+        $points[] = ['x' => $t, 'y' => $cob];
+    }
+    return $points;
+}
+
 
 
 
@@ -149,38 +169,37 @@ $time_bucket = function(int $min): string {
     return 'evening';
 };
 
-// Combine meal and insulin events ordered by time
-$events = [];
-foreach ($meal_points as $m) {
-    $events[] = ['x' => $m['x'], 'bg' => $m['y'], 'type' => 'meal', 'carbs' => $m['carbs']];
-}
-foreach ($insulin_points as $i) {
-    $events[] = ['x' => $i['x'], 'bg' => $i['y'], 'type' => 'insulin', 'units' => $i['units']];
-}
-usort($events, function($a, $b) { return $a['x'] <=> $b['x']; });
+// Pre-compute IOB and COB curves
+$step = 5;
+$iob_points = compute_iob_points($bolus_insulin, $minutes, $step);
+$cob_points = compute_cob_points($meals, $minutes, $step);
 
+// Linear interpolation helper
+$interp = function(array $points, int $t) use ($step) {
+    $index = intdiv($t, $step);
+    if ($index >= count($points) - 1) return $points[count($points) - 1]['y'];
+    $p1 = $points[$index];
+    $p2 = $points[$index + 1];
+    $ratio = ($t - $p1['x']) / ($step);
+    return $p1['y'] + ($p2['y'] - $p1['y']) * $ratio;
+};
+
+$iob_at_time = function(int $t) use ($iob_points, $interp) { return $interp($iob_points, $t); };
+$cob_at_time = function(int $t) use ($cob_points, $interp) { return $interp($cob_points, $t); };
+
+// Incremental prediction model
 $predicted_points = [];
 if (!empty($glucose_points)) {
     $predicted_y = $glucose_points[0]['y'];
-    $predicted_points[] = ['x' => $glucose_points[0]['x'], 'y' => $predicted_y];
-    $ei = 0;
-    for ($gi = 1; $gi < count($glucose_points); $gi++) {
-        $x = $glucose_points[$gi]['x'];
-        while ($ei < count($events) && $events[$ei]['x'] <= $x) {
-            $bucket = $time_bucket($events[$ei]['x']);
-            $start_bg = $events[$ei]['bg'];
-            if ($events[$ei]['type'] === 'meal') {
-                $predicted_y = $start_bg + $events[$ei]['carbs'] * $metrics[$bucket]['carb_absorption'];
-            } else {
-                $predicted_y = $start_bg - $events[$ei]['units'] * $metrics[$bucket]['insulin_sensitivity'];
-            }
-            $ei++;
-        }
-        $predicted_points[] = ['x' => $x, 'y' => $predicted_y];
+    $predicted_points[] = ['x' => 0, 'y' => $predicted_y];
+    for ($t = $step; $t <= 1440; $t += $step) {
+        $bucket = $time_bucket($t);
+        $iob = $iob_at_time($t);
+        $cob = $cob_at_time($t);
+        $predicted_y += $cob * $metrics[$bucket]['carb_absorption'] - $iob * $metrics[$bucket]['insulin_sensitivity'];
+        $predicted_points[] = ['x' => $t, 'y' => $predicted_y];
     }
 }
-$iob_points = compute_iob_points($bolus_insulin, $minutes);
-$iob_points = compute_iob_points($bolus_insulin, $minutes);
 $mysqli->close();
 ?>
 <!DOCTYPE html>
